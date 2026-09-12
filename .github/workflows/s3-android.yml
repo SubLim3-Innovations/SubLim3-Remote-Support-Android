@@ -1,0 +1,128 @@
+name: Build S3 Android Client
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.75"
+  CARGO_NDK_VERSION: "3.1.2"
+  ANDROID_FLUTTER_VERSION: "3.24.5"
+  NDK_VERSION: "r28c"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  build-android-arm64:
+    needs: generate-bridge
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake curl gcc-multilib git g++ g++-multilib libayatana-appindicator3-dev libasound2-dev libc6-dev libclang-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-3-dev libpam0g-dev libpulse-dev libva-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libxfixes-dev llvm-dev nasm ninja-build openjdk-17-jdk-headless pkg-config wget
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
+          cache: true
+
+      - name: Patch Flutter 3.24
+        shell: bash
+        run: |
+          cd "$(dirname "$(dirname "$(which flutter)")")"
+          git apply "${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Build Android native dependencies
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: ./flutter/build_android_deps.sh arm64-v8a
+
+      - name: Restore generated bridge
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android
+          components: rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: sublim3-rustdesk-android
+          key: aarch64-linux-android
+
+      - name: Build RustDesk native library
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo install cargo-ndk --version "${{ env.CARGO_NDK_VERSION }}" --locked
+          ./flutter/ndk_arm64.sh
+          mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
+          cp ./target/aarch64-linux-android/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
+          cp "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" ./flutter/android/app/src/main/jniLibs/arm64-v8a/
+
+      - name: Configure release signing
+        shell: bash
+        env:
+          S3_ANDROID_KEYSTORE: ${{ secrets.S3_ANDROID_KEYSTORE }}
+          S3_ANDROID_KEY_ALIAS: ${{ secrets.S3_ANDROID_KEY_ALIAS }}
+          S3_ANDROID_KEY_PASSWORD: ${{ secrets.S3_ANDROID_KEY_PASSWORD }}
+          S3_ANDROID_STORE_PASSWORD: ${{ secrets.S3_ANDROID_STORE_PASSWORD }}
+        run: |
+          test -n "${S3_ANDROID_KEYSTORE}"
+          printf '%s' "${S3_ANDROID_KEYSTORE}" | base64 --decode > flutter/android/s3-release.jks
+          cat > flutter/android/key.properties <<EOF
+          storePassword=${S3_ANDROID_STORE_PASSWORD}
+          keyPassword=${S3_ANDROID_KEY_PASSWORD}
+          keyAlias=${S3_ANDROID_KEY_ALIAS}
+          storeFile=s3-release.jks
+          EOF
+
+      - name: Build signed ARM64 APK
+        working-directory: flutter
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi --build-name 1.4.9-s3.1 --build-number 140901
+
+      - name: Name release artifact
+        run: cp flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk SubLim3-Remote-Support-Android-arm64-v1.4.9-s3.1.apk
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubLim3-Remote-Support-Android-arm64
+          path: SubLim3-Remote-Support-Android-arm64-v1.4.9-s3.1.apk
+          if-no-files-found: error

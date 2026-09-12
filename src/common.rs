@@ -2081,6 +2081,25 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
 }
 
 pub fn load_custom_client() {
+    #[cfg(target_os = "android")]
+    {
+        *config::APP_NAME.write().unwrap() = "SubLim3 Remote Support".to_owned();
+        let mut settings = config::OVERWRITE_SETTINGS.write().unwrap();
+        settings.insert(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_owned(), "support.sublim3innovations.com".to_owned());
+        settings.insert(keys::OPTION_KEY.to_owned(), "p0Lc4dYWJNrd40duLhZ+pyuCUvTiGslYe8khC0453sc=".to_owned());
+        for option in [
+            keys::OPTION_ENABLE_KEYBOARD,
+            keys::OPTION_ENABLE_CLIPBOARD,
+            keys::OPTION_ENABLE_FILE_TRANSFER,
+            keys::OPTION_ENABLE_AUDIO,
+            keys::OPTION_ENABLE_CAMERA,
+            keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW,
+            keys::OPTION_ALLOW_REMOTE_CONFIG_MODIFICATION,
+        ] {
+            settings.insert(option.to_owned(), "N".to_owned());
+        }
+        return;
+    }
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
