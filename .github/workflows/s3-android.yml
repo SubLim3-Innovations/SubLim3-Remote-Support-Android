@@ -42,7 +42,14 @@ jobs:
         shell: bash
         run: |
           cd "$(dirname "$(dirname "$(which flutter)")")"
-          git apply "${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+          patch_file="${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+          if git apply --check "${patch_file}"; then
+            git apply "${patch_file}"
+          elif git apply --reverse --check "${patch_file}"; then
+            echo "Flutter compatibility patch is already applied."
+          else
+            echo "Flutter SDK already contains a compatible dropdown implementation; continuing without the legacy patch."
+          fi
 
       - name: Install Android NDK
         uses: nttld/setup-ndk@v1
