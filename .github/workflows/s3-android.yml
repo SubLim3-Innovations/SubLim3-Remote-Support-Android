@@ -103,7 +103,7 @@ jobs:
           S3_ANDROID_STORE_PASSWORD: ${{ secrets.S3_ANDROID_STORE_PASSWORD }}
         run: |
           test -n "${S3_ANDROID_KEYSTORE}"
-          printf '%s' "${S3_ANDROID_KEYSTORE}" | base64 --decode > flutter/android/s3-release.jks
+          printf '%s' "${S3_ANDROID_KEYSTORE}" | base64 --decode > flutter/android/app/s3-release.jks
           cat > flutter/android/key.properties <<EOF
           storePassword=${S3_ANDROID_STORE_PASSWORD}
           keyPassword=${S3_ANDROID_KEY_PASSWORD}
